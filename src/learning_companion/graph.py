@@ -38,6 +38,9 @@ class GraphState(TypedDict):
 
 NODE_FOR_ROUTE = {"general": "general_chat", "study": "study_helper"}
 
+# Nodes whose model text is shown to the user as it is written.
+TEXT_NODES = {"general_chat", "study_helper", "improver"}
+
 
 def build_graph(settings: Settings):
     """Compile the graph. Raises ConfigurationError if the model settings are missing."""
@@ -128,8 +131,12 @@ def build_graph(settings: Settings):
 def run_graph_events(graph, user_message: str, messages: list[BaseMessage]):
     """Run one request, reporting progress as it happens.
 
-    Yields ("route", route) as soon as the router has chosen, then
-    ("done", route, final_answer, trace) when the graph has finished.
+    Yields, in order:
+      ("route", route)                  as soon as the router has chosen;
+      ("token", text)                   model text as it is written, by an answer
+                                        node or by the improver (never the reviewer);
+      ("improve",)                      the reviewer asked for the one improvement;
+      ("done", route, final_answer, trace)  when the graph has finished.
     """
     state: GraphState = {
         "user_message": user_message,
@@ -143,14 +150,23 @@ def run_graph_events(graph, user_message: str, messages: list[BaseMessage]):
     }
     nodes: list[str] = []
     decisions: list[str] = []
-    for update in graph.stream(state, stream_mode="updates"):
-        for name, output in update.items():
+    for mode, data in graph.stream(state, stream_mode=["updates", "messages"]):
+        if mode == "messages":
+            chunk, metadata = data
+            text = chunk.content
+            in_text_node = metadata.get("langgraph_node") in TEXT_NODES
+            if in_text_node and text and isinstance(text, str):
+                yield ("token", text)
+            continue
+        for name, output in data.items():
             nodes.append(name)
             state.update(output)
             if name == "router":
                 yield ("route", state["route"])
             if name == "reviewer":
                 decisions.append(output["review_decision"])
+                if output["review_decision"] == "improve":
+                    yield ("improve",)
     trace = (
         f"route={state['route']} | review={' then '.join(decisions)} | "
         f"revisions={state['revision_count']} | " + " → ".join(["START", *nodes, "END"])

@@ -165,18 +165,26 @@ def chat_completions(request: ChatRequest):
         yield _sse(
             _chunk(completion_id, created, model_name, {"role": "assistant"}, None)
         )
+        streamed = False
         try:
             for event in run_graph_events(graph, question, history):
-                if event[0] == "route":
-                    # The router has chosen: show the label at once, before the answer.
+                kind = event[0]
+                if kind == "route":
+                    # The router has chosen: show the label at once.
                     yield content(f"[route: {event[1]}]\n\n")
+                elif kind == "token":
+                    # Model text goes out as it is written.
+                    streamed = True
+                    yield content(event[1])
+                elif kind == "improve":
+                    # The draft is already on screen; the improved answer follows it.
+                    yield content("\n\n---\n**Improved answer:**\n\n")
                 else:
                     _, _, answer, trace = event
                     logger.info(trace)
-                    # The reviewed answer is released in small pieces, so Open WebUI
-                    # renders it gradually.
-                    for piece in _pieces(answer):
-                        yield content(piece)
+                    if not streamed:  # e.g. "/study" with no question: no model text
+                        for piece in _pieces(answer):
+                            yield content(piece)
         except Exception as exc:  # noqa: BLE001
             yield content(f"[Model call failed: {exc}]")
         yield _sse(_chunk(completion_id, created, model_name, {}, "stop"))
