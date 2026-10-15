@@ -16,6 +16,10 @@ from .graph import build_graph, run_graph, run_graph_events
 
 logger = logging.getLogger("uvicorn.error")
 
+# Pause after each streamed piece of model text, so the reply is easy to follow.
+# Raise it to slow the reply down, lower it (or 0) to speed it up.
+STREAM_DELAY_SECONDS = 0.03
+
 app = FastAPI(title="Learning Companion Chatbot")
 
 
@@ -176,6 +180,7 @@ def chat_completions(request: ChatRequest):
                     # Model text goes out as it is written.
                     streamed = True
                     yield content(event[1])
+                    time.sleep(STREAM_DELAY_SECONDS)
                 elif kind == "improve":
                     # The draft is already on screen; the improved answer follows it.
                     yield content("\n\n---\n**Improved answer:**\n\n")
