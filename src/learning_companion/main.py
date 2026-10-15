@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 import uuid
 from typing import Literal
@@ -11,7 +12,7 @@ from pydantic import BaseModel
 
 from .chain import ConfigurationError, prompt_roles, to_history
 from .config import get_settings
-from .graph import build_graph, run_graph
+from .graph import build_graph, run_graph, run_graph_events
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -44,6 +45,11 @@ class ChatRequest(BaseModel):
 
 def _error(status: int, message: str) -> JSONResponse:
     return JSONResponse(status_code=status, content={"error": {"message": message}})
+
+
+def _pieces(text: str) -> list[str]:
+    """Split text into word-sized pieces (each keeps its trailing whitespace)."""
+    return re.findall(r"\S+\s*|\s+", text)
 
 
 def _sse(data: dict | str) -> str:
@@ -151,14 +157,28 @@ def chat_completions(request: ChatRequest):
         }
 
     def events():
+        def content(text: str) -> str:
+            return _sse(
+                _chunk(completion_id, created, model_name, {"content": text}, None)
+            )
+
         yield _sse(
             _chunk(completion_id, created, model_name, {"role": "assistant"}, None)
         )
         try:
-            text = answer_text()
+            for event in run_graph_events(graph, question, history):
+                if event[0] == "route":
+                    # The router has chosen: show the label at once, before the answer.
+                    yield content(f"[route: {event[1]}]\n\n")
+                else:
+                    _, _, answer, trace = event
+                    logger.info(trace)
+                    # The reviewed answer is released in small pieces, so Open WebUI
+                    # renders it gradually.
+                    for piece in _pieces(answer):
+                        yield content(piece)
         except Exception as exc:  # noqa: BLE001
-            text = f"[Model call failed: {exc}]"
-        yield _sse(_chunk(completion_id, created, model_name, {"content": text}, None))
+            yield content(f"[Model call failed: {exc}]")
         yield _sse(_chunk(completion_id, created, model_name, {}, "stop"))
         yield _sse("[DONE]")
 

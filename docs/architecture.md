@@ -83,7 +83,7 @@ START → router → general_chat → reviewer → END
 
 If the reviewer call itself fails, the draft is approved as it is and the reason says the review was unavailable, so a review problem never loses an answer.
 
-`main.py` hands the request to the graph. The final answer goes through the same OpenAI-compatible adapter, starting with a `[route: ...]` label. Streaming requests send the finished answer as one text chunk, followed by the stop chunk and `[DONE]`. The development log shows a trace such as `route=study | review=improve then approve | revisions=1 | START → router → study_helper → reviewer → improver → reviewer → END`. It never shows keys, hidden prompts or answer text.
+`main.py` hands the request to the graph. The final answer goes through the same OpenAI-compatible adapter, starting with a `[route: ...]` label. Streaming requests send the `[route: ...]` label as soon as the router has chosen, then the reviewed answer in small word-sized chunks, then the stop chunk and `[DONE]`. The answer is released only after review (it may still be improved), so the text appears gradually after the graph finishes, not while the model is writing the draft. The development log shows a trace such as `route=study | review=improve then approve | revisions=1 | START → router → study_helper → reviewer → improver → reviewer → END`. It never shows keys, hidden prompts or answer text.
 
 Out of scope: LLM routing, more than one improvement, tools, MCP, retrieval, web search, human approval, databases, persistence.
 

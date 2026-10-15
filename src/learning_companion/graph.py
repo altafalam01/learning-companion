@@ -125,8 +125,12 @@ def build_graph(settings: Settings):
     return graph.compile()
 
 
-def run_graph(graph, user_message: str, messages: list[BaseMessage]):
-    """Run one request. Returns (route, final_answer, trace)."""
+def run_graph_events(graph, user_message: str, messages: list[BaseMessage]):
+    """Run one request, reporting progress as it happens.
+
+    Yields ("route", route) as soon as the router has chosen, then
+    ("done", route, final_answer, trace) when the graph has finished.
+    """
     state: GraphState = {
         "user_message": user_message,
         "messages": messages,
@@ -143,10 +147,20 @@ def run_graph(graph, user_message: str, messages: list[BaseMessage]):
         for name, output in update.items():
             nodes.append(name)
             state.update(output)
+            if name == "router":
+                yield ("route", state["route"])
             if name == "reviewer":
                 decisions.append(output["review_decision"])
     trace = (
         f"route={state['route']} | review={' then '.join(decisions)} | "
         f"revisions={state['revision_count']} | " + " → ".join(["START", *nodes, "END"])
     )
-    return state["route"], state["final_answer"], trace
+    yield ("done", state["route"], state["final_answer"], trace)
+
+
+def run_graph(graph, user_message: str, messages: list[BaseMessage]):
+    """Run one request. Returns (route, final_answer, trace)."""
+    *_, (_, route, final_answer, trace) = run_graph_events(
+        graph, user_message, messages
+    )
+    return route, final_answer, trace
